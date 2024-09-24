@@ -1,0 +1,20 @@
+{
+  "active": false,
+  "connections": {},
+  "createdAt": "2024-09-23T20:52:34.912Z",
+  "id": "fVxaCvDjDQ6Uq5qT",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "name": "CLAUDIO_TEST",
+  "nodes": [],
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-09-23T21:01:41.000Z",
+  "versionId": "d7a6ff41-3d23-4f6e-81f3-0a7350d0c17b"
+}
