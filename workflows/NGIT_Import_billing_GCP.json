@@ -1,0 +1,424 @@
+{
+  "active": false,
+  "connections": {
+    "Activacion diaria": {
+      "main": [
+        [
+          {
+            "node": "Extraccion desde GCP",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Datos actuales BBDD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraccion desde GCP": {
+      "main": [
+        [
+          {
+            "node": "Comparacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos actuales BBDD": {
+      "main": [
+        [
+          {
+            "node": "Comparacion",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Comparacion": {
+      "main": [
+        [
+          {
+            "node": "Datos faltantes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "Datos presentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos faltantes": {
+      "main": [
+        [
+          {
+            "node": "Correo insercion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos presentes": {
+      "main": [
+        [
+          {
+            "node": "Correo actualizacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2024-09-17T14:22:34.881Z",
+  "id": "dLZjB62SfgrF7bpu",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "name": "NGIT_Import_billing_GCP",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "triggerAtHour": 13,
+              "triggerAtMinute": 23
+            }
+          ]
+        }
+      },
+      "id": "c07c8c72-5eb2-451a-b85e-2ea6f90f4448",
+      "name": "Activacion diaria",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        540,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "projectId": {
+          "__rl": true,
+          "value": "billing-cuentas-tivit",
+          "mode": "list",
+          "cachedResultName": "billing-cuentas-tivit",
+          "cachedResultUrl": "https://console.cloud.google.com/bigquery?project=billing-cuentas-tivit"
+        },
+        "sqlQuery": "WITH invoice_base_data AS (\n  SELECT \n    a.invoice.month AS invoice_month,\n    a.cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(a.credits) AS c), 0) AS adjusted_cost,\n    a.cost,\n    a.billing_account_id,\n    an.nombre AS account_name,\n    a.service.description AS service_description,\n    a.project.name AS project_name,\n    FORMAT_TIMESTAMP('%Y-%m', PARSE_TIMESTAMP('%Y%m', a.invoice.month)) AS month,\n    TIMESTAMP_TRUNC(PARSE_TIMESTAMP('%Y%m%d', CONCAT(a.invoice.month, '01')), WEEK(MONDAY)) AS week_start,\n    DATE(PARSE_TIMESTAMP('%Y%m%d', CONCAT(a.invoice.month, '01'))) AS date\n  FROM \n    `billing-cuentas-tivit.data_set_cuentas_global.gcp_billing_export_v1_01A7C8_2A13F5_47B1D5` AS a\n  LEFT JOIN \n    `billing-cuentas-tivit.data_set_cuentas_global.accounts_name` AS an\n  ON \n    a.billing_account_id = an.id_account\n  WHERE \n    PARSE_TIMESTAMP('%Y%m', a.invoice.month) >= TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 2 MONTH))\n),\n\nusage_base_data AS (\n  SELECT \n    a.usage_start_time,\n    a.cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(a.credits) AS c), 0) AS adjusted_cost,\n    a.billing_account_id,\n    an.nombre AS account_name,\n    a.service.description AS service_description,\n    a.project.name AS project_name,\n    FORMAT_TIMESTAMP('%Y-%m', a.usage_start_time) AS month, \n    TIMESTAMP_TRUNC(a.usage_start_time, WEEK(MONDAY)) AS week_start,\n    DATE(a.usage_start_time) AS date\n  FROM \n    `billing-cuentas-tivit.data_set_cuentas_global.gcp_billing_export_v1_01A7C8_2A13F5_47B1D5` AS a\n  LEFT JOIN \n    `billing-cuentas-tivit.data_set_cuentas_global.accounts_name` AS an\n  ON \n    a.billing_account_id = an.id_account\n  WHERE \n    a.usage_start_time >= TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 2 MONTH))\n),\n\n-- Data agregada desde tabla invoice_base_data\nmonthly_cost AS (\n  SELECT \n    month,\n    billing_account_id,\n    account_name,\n    SUM(adjusted_cost) AS total_cost\n  FROM \n    invoice_base_data\n  GROUP BY \n    month, billing_account_id, account_name\n),\n\ndaily_cost AS (\n  SELECT \n    FORMAT_TIMESTAMP('%Y-%m-%d', date) AS period,\n    billing_account_id,\n    account_name,\n    SUM(adjusted_cost) AS total_cost\n  FROM \n    invoice_base_data\n  GROUP BY \n    date, billing_account_id, account_name\n),\n\nproject_cost AS (\n  SELECT \n    month,\n    billing_account_id,\n    account_name,\n    project_name,\n    SUM(adjusted_cost) AS total_cost\n  FROM \n    invoice_base_data\n  GROUP BY \n    month, billing_account_id, account_name, project_name\n),\n\nservice_cost AS (\n  SELECT \n    month,\n    billing_account_id,\n    account_name,\n    service_description,\n    SUM(adjusted_cost) AS total_cost\n  FROM \n    invoice_base_data\n  GROUP BY \n    month, billing_account_id, account_name, service_description\n),\n\n-- Data agregada desde tabla usage_base_data\nweekly_cost AS (\n  SELECT \n    FORMAT_TIMESTAMP('%Y-%W', week_start) AS period,\n    billing_account_id,\n    account_name,\n    service_description,\n    SUM(adjusted_cost) AS total_cost\n  FROM \n    usage_base_data\n  GROUP BY \n    week_start, billing_account_id, account_name, service_description\n)\n\n-- Unir resultados con \"UNION ALL\"\nSELECT\n  'monthly_cost' AS data_type,\n  month AS period,\n  NULL AS week_start,\n  NULL AS date,\n  billing_account_id,\n  account_name,\n  NULL AS project_name,\n  NULL AS service_description,\n  total_cost\nFROM \n  monthly_cost\n\nUNION ALL\n\nSELECT\n  'daily_cost' AS data_type,\n  period AS period,\n  NULL AS week_start,\n  NULL AS date,\n  billing_account_id,\n  account_name,\n  NULL AS project_name,\n  NULL AS service_description,\n  total_cost\nFROM \n  daily_cost\n\nUNION ALL\n\nSELECT\n  'project_cost' AS data_type,\n  month AS period,\n  NULL AS week_start,\n  NULL AS date,\n  billing_account_id,\n  account_name,\n  project_name,\n  NULL AS service_description,\n  total_cost\nFROM \n  project_cost\n\nUNION ALL\n\nSELECT\n  'service_cost' AS data_type,\n  month AS period,\n  NULL AS week_start,\n  NULL AS date,\n  billing_account_id,\n  account_name,\n  NULL AS project_name,\n  service_description,\n  total_cost\nFROM \n  service_cost\n\nUNION ALL\n\nSELECT\n  'weekly_cost' AS data_type,\n  period AS period,\n  NULL AS week_start,\n  NULL AS date,\n  billing_account_id,\n  account_name,\n  NULL AS project_name,\n  service_description,\n  total_cost\nFROM \n  weekly_cost\n",
+        "options": {}
+      },
+      "id": "50a4ff21-a8e9-4ea8-aad0-0b7d29784f9d",
+      "name": "Extraccion desde GCP",
+      "type": "n8n-nodes-base.googleBigQuery",
+      "typeVersion": 2.1,
+      "position": [
+        920,
+        580
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "PGRmDcpzB95WLQuS",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "table": {
+          "__rl": true,
+          "value": "billing_data",
+          "mode": "list",
+          "cachedResultName": "billing_data"
+        },
+        "returnAll": true,
+        "where": {
+          "values": [
+            {
+              "column": "period",
+              "condition": "IS NOT NULL"
+            },
+            {
+              "column": "billing_account_id",
+              "condition": "IS NOT NULL"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0702e7c3-a5c5-490b-88f3-3cf638f0f476",
+      "name": "Datos actuales BBDD",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        920,
+        820
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "PQoKv69eojomWNfD",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "period",
+              "field2": "period"
+            },
+            {
+              "field1": "billing_account_id",
+              "field2": "billing_account_id"
+            },
+            {
+              "field1": "project_name",
+              "field2": "project_name"
+            },
+            {
+              "field1": "service_description",
+              "field2": "service_description"
+            }
+          ]
+        },
+        "resolve": "preferInput1",
+        "options": {
+          "multipleMatches": "first"
+        }
+      },
+      "id": "52b9276b-c0f3-49fd-b10b-4b1bc311143d",
+      "name": "Comparacion",
+      "type": "n8n-nodes-base.compareDatasets",
+      "typeVersion": 2.3,
+      "position": [
+        1240,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "table": {
+          "__rl": true,
+          "value": "billing_data",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "f6b738ae-d069-4302-bc94-760f34392c8d",
+      "name": "Datos faltantes",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1580,
+        580
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "PQoKv69eojomWNfD",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "billing_data",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "billing_account_id",
+        "valueToMatchOn": "={{ $json.billing_account_id }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "total_cost",
+              "value": "={{ $json.total_cost }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a9998db9-f6ec-4629-8625-131665e7aadc",
+      "name": "Datos presentes",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1580,
+        820
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "PQoKv69eojomWNfD",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "nextgenitchile@tivit.com",
+        "toEmail": "nextgenitchile@tivit.com",
+        "subject": "GCP - Billing Margen",
+        "html": "Se han cargado datos nuevos en la tabla Billing Reseller GCP",
+        "options": {}
+      },
+      "id": "f5e654ed-e88f-4b75-aa43-b0af6e89aff6",
+      "name": "Correo insercion",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1920,
+        580
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "xE426TEgIdL3miIk",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "nextgenitchile@tivit.com",
+        "toEmail": "nextgenitchile@tivit.com",
+        "subject": "GCP - Billing Margen",
+        "html": "Se han realizado actualización de datos en la tabla Billing Reseller GCP",
+        "options": {}
+      },
+      "id": "d1cd67b9-226a-4fc1-b496-6e32de0bb4a2",
+      "name": "Correo actualizacion",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1920,
+        820
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "xE426TEgIdL3miIk",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Gatillante",
+        "height": 620.1791044776116,
+        "width": 312.955223880597
+      },
+      "id": "51da42dd-b5c3-4f8f-b8c7-5e89ae73d072",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        460,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Carga de datos",
+        "height": 620.1791044776114,
+        "width": 332.5970149253727,
+        "color": 3
+      },
+      "id": "c403cedd-560f-491d-9fa8-ecf428a3fe93",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        780,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Analisis",
+        "height": 620.1791044776114,
+        "width": 333.16271202209293,
+        "color": 4
+      },
+      "id": "a8b03bd4-c4c9-4686-8cc0-b322f93d1475",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Procesamiento",
+        "height": 620.1791044776114,
+        "width": 328.388059701492,
+        "color": 5
+      },
+      "id": "5954eb98-ba02-4847-9824-b51af6e6d084",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1460,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Notificacion",
+        "height": 620.1791044776114,
+        "width": 331.7597269474663,
+        "color": 6
+      },
+      "id": "54c3114e-582f-4519-93a8-93be2cd76abe",
+      "name": "Sticky Note4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1796.628332754026,
+        460
+      ]
+    }
+  ],
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Santiago",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Activacion diaria": {
+      "recurrenceRules": []
+    }
+  },
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2024-09-23T20:56:58.000Z",
+  "versionId": "ab26061e-d306-4787-b1b7-2edf6941caca"
+}
